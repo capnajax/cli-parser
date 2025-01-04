@@ -1,5 +1,6 @@
 ---
 excludeDirs:
+  - dist
   - node_modules
 fileTypes:
   - patterns:

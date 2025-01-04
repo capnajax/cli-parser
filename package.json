@@ -7,8 +7,7 @@
   "scripts": {
     "build": "tsc",
     "blinkers": "node_modules/blinkers/bin/blinkers.js",
-    "mocha": "node_modules/mocha/bin/mocha",
-    "test": "npm run build && npm run blinkers && npm run mocha"
+    "test": "npm run build && npm run blinkers && node --test"
   },
   "repository": {
     "type": "git",
@@ -24,6 +23,7 @@
     "@types/node": "^22.10.2",
     "blinkers": "^0.2.0",
     "mocha": "^9.1.3",
+    "source-map-support": "^0.5.21",
     "test-battery": "^2.1.0"
   }
 }

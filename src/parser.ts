@@ -1,5 +1,7 @@
 'use strict';
 
+import 'source-map-support/register.js';
+
 import process from 'node:process';
 import { isSymbolObject } from 'node:util/types';
 
@@ -18,6 +20,10 @@ export type HandlerResult = {
 };
 export type ArgType = string|number|boolean|string[];
 export type ArgTypeName = 'boolean'|'integer'|'string'|'list';
+export function isArgTypeName (name:string):name is ArgTypeName {
+  return ['boolean', 'integer', 'string', 'list'].includes(name);
+}
+
 export const next = Symbol('next');
 
 type ArgsArg = Record<string, ArgType>;
@@ -28,27 +34,27 @@ type ArgsArg = Record<string, ArgType>;
  * return an object that contains value that should be stored in the `argv`
  * object. The value is an object with `value` being the value to use, and
  * `next` being a boolean that indicates whether to continue to the next.
- * 
+ *
  * If `next` is `true`, the next handler will be called but with the value this
  * handler returned. If `next` is `false`, the next handler will not be called
  * and the value will be stored in the `argv` object.
- * 
+ *
  * Optionally, the handler can also simply return `next` (the symbol) to defer
  * to the next handler without changing the value.
- * 
+ *
  * These functions can be overridden by using `addOption` to add a new option
  * with a handler that returns a value. Overriding handlers can defer to the
  * original handler by returning `next`.
- * 
+ *
  * If a handler returns a value, but `next` is `true`, the value should be
  * a string, number, boolean, or an array of strings. If `next` is `false`, the
  * value can be any type.
- * 
+ *
  * Handlers must return values immediately. They cannot be asynchronous. They
  * also must be idempotent.
  */
 type Handler = (
-  name:string, value:ArgType|undefined, args:ArgsArg
+  value:ArgType|undefined, name:string, args:ArgsArg
 )=>HandlerResult|Symbol;
 
 /**
@@ -56,15 +62,15 @@ type Handler = (
  * are called in the order they are first added to the parser. These functions
  * return `null` if the value is valid or an error message if the value is not
  * valid.
- * 
+ *
  * These functions can be overridden by using `addOption` to add a new option
  * with a validator that returns a value. Overriding validators can defer to the
  * original validator by returning `next`.
- * 
+ *
  * Validators must return values immediately. They cannot be asynchronous. They
  * also must be idempotent.
  */
-type Validator = (name:string, value:ArgType, args:ArgsArg)=>string|null|Symbol;
+type Validator = (value:ArgType, name:string, args:ArgsArg)=>string|null|Symbol;
 
 export interface OptionsDef {
   arg?: string[]|'positional'|'--',
@@ -80,7 +86,7 @@ export interface OptionsDef {
 }
 
 interface NormalizedOptionsDef {
-  arg: string[]|'positional',
+  arg: string[]|'positional'|'--',
   default?: ArgType,
   description?: string,
   env: string|null,
@@ -119,6 +125,17 @@ export const listArg = argTypeName('list');
 
 export class Parser {
 
+  /**
+   * Errors from normalizing option definitions. These don't get cleared when
+   * re-parsing the command line.
+   */
+  private normalizationErrors:Record<string, string>|null = null;
+  /**
+   * All errors, including errors in the option definition AND the command line.
+   * These get cleared when re-parsing the command line, and set to `null` if
+   * there are no `normalizationErrors` or copied from `normalizationErrors` if
+   * there are.
+   */
   private errorValues:Record<string, string>|null = null;
 
   /**
@@ -175,6 +192,14 @@ export class Parser {
     return this.values;
   }
 
+  /**
+   * Get the values of the options before they have been handled or validated.
+   * Should only be used for debugging handlers and validators.
+   */
+  get rawNormalizedValues():Record<string, ArgType>|null {
+    return this.normalizedValues;
+  }
+
   get errors():Record<string, string>|null {
     return this.errorValues;
   }
@@ -216,6 +241,35 @@ export class Parser {
     this.reparseIfNecessary();
   }
 
+  /**
+   * Check the options for errors. This is to check how options work with each
+   * other, not for errors with individual options.
+   */
+  private checkOptions():void {
+    // duplicate positional arguments
+    let positionalCount = Object.keys(this.options).filter(oa => {
+      if (this.options[oa]?.length > 0) {
+        return this.options[oa][0].arg === 'positional';
+      }
+    }).length;
+    if (positionalCount > 1) {
+      this.errorValues ||= {};
+      this.errorValues['_positional'] =
+        'Cannot have more than one positional argument.';
+    }
+    // duplicate double-dash arguments
+    let doubleDashCount = Object.keys(this.options).filter(oa => {
+      if (this.options[oa]?.length > 0) {
+        return this.options[oa][0].arg === '--';
+      }
+    }).length;
+    if (doubleDashCount > 1) {
+      this.errorValues ||= {};
+      this.errorValues['_double_dash'] =
+        'Cannot have more than one \'--\' argument.';
+    }
+  }
+
   private freezeValues():void {
     for (const key of Object.keys(this.values)) {
       if (typeof this.values[key] === 'object') {
@@ -244,7 +298,7 @@ export class Parser {
         this.options[optionName].concat(
           this.normalizeOptionDef({ name: optionName,
             handler: [
-            (name:string, value:ArgType|undefined) => ({ value, next: false })
+            (value:ArgType|undefined, name:string) => ({ value, next: false })
             ]
           })
         )
@@ -252,12 +306,12 @@ export class Parser {
         if (optionDef.handler) {
           const handlers = (Array.isArray(optionDef.handler)
             ? optionDef.handler
-            : [optionDef.handler]);          
+            : [optionDef.handler]);
           let lastResult:unknown = this.normalizedValues[optionDef.name];
           for (const handler of handlers) {
             const handlerReturn:HandlerResult|Symbol = handler(
-              optionDef.name,
               lastResult as ArgType,
+              optionDef.name,
               this.normalizedValues
             );
             if (handlerReturn === next) {
@@ -281,19 +335,109 @@ export class Parser {
     }
   }
 
-  private hasError(optionName:string):boolean {
+  hasError(optionName:string):boolean {
     return !! (this.errorValues && Object.hasOwn(this.errorValues, optionName));
   }
 
-  private hasErrors():boolean {
+  hasErrors():boolean {
     return !! (this.errorValues && Object.keys(this.errorValues).length > 0);
   }
 
   private normalizeOptionDef(def:OptionsDef|OptionsDef[])
   :NormalizedOptionsDef[] {
+
     if (Array.isArray(def)) {
+
       return def.map(d => this.normalizeOptionDef(d)).flat();
+
     } else {
+      const err = (msg:string) => {
+        this.normalizationErrors ||= {};
+        this.normalizationErrors[def.name || '_no_name'] = msg;
+      };
+
+      // some checks.
+      if (!def.name) {
+        err('Option definition must have a name.');
+      }
+      if (typeof def.arg === 'string') {
+        if (def.arg !== 'positional' && def.arg !== '--') {
+          err('Option definition must have a valid argument.');
+        }
+      }
+      if (def.required && def.default) {
+        err('Required option cannot have a default.');
+      }
+      if (def.arg === 'positional' && def.env) {
+        err('Positional arguments cannot have an environment variable.');
+      }
+
+      const argType = argTypeName(
+        def.type || (
+          typeof def.arg === 'string' &&
+          [`--`, `positional`].includes(def.arg) ? listArg : stringArg
+        )
+      );
+
+      // more checks.
+      if (def.arg === 'positional' && argType !== listArg) {
+        err('Positional arguments must be lists.');
+      }
+      if (def.arg === '--' && def.env) {
+        err('Double-dash arguments cannot have an environment variable.');
+      }
+      if (def.arg === '--' && argType !== listArg) {
+       err('Double-dash arguments must be lists.');
+      }
+
+      // ensure default values are the right type. Default values should always
+      // be valid on the command line.
+      if (def.default) {
+        switch(def.type) {
+        case 'boolean':
+          if (def.default && typeof def.default !== 'boolean') {
+            if (
+              typeof def.default === 'string' &&
+              ! ( this.parserOptions.truthy.includes(def.default as string) ||
+                  this.parserOptions.falsey.includes(def.default as string) )
+            ) {
+              err('Boolean options must have a boolean default.');
+            }
+          }
+          break;
+        case 'integer':
+          if (def.default && typeof def.default !== 'number') {
+            if (
+              typeof def.default === 'string' &&
+              ! Number.parseInt(def.default)
+            ) {
+              err('Integer options must have a number default.');
+            }
+          }
+          break;
+        case 'list':
+          if (def.default) {
+            if (typeof def.default === 'string') {
+              def.default = [def.default];
+            } else if (Array.isArray(def.default)) {
+              if (! def.default.every(e => typeof e === 'string')) {
+                err(
+                  'List options default array members must all be string'
+                );
+              }
+            } else {
+              err('List options must have a string or a string array default.');
+            }
+          }
+          break;
+        case 'string':
+          if (def.default && typeof def.default !== 'string') {
+            err('String options must have a string default.');
+          }
+          break;
+        }
+      }
+
       return [Object.assign({
         arg: [],
         default: undefined,
@@ -302,7 +446,7 @@ export class Parser {
         handler: [],
         required: false,
         silent: false,
-        type: def.arg === 'positional' ? listArg : stringArg,
+        type: argType,
         validator: []
       }, def)];
     }
@@ -312,7 +456,6 @@ export class Parser {
    * Get the value of the options before they have been normalized or validated.
    */
   private normalizeOptionValues():void {
-    this.errorValues = null;
     this.normalizedValues = {};
 
     // first scan the command line arguments
@@ -360,7 +503,7 @@ export class Parser {
           } else {
             this.errorValues ||= {};
             this.errorValues[argSwitch] =
-              `Unknown command line option "${argSwitch}"`;  
+              `Unknown command line option "${argSwitch}"`;
           }
         }
       }
@@ -456,17 +599,7 @@ export class Parser {
         }
         break;
       case 'list':
-        if (this.normalizedValues[optionDefKey]) {
-          value = (
-            (this.normalizedValues[optionDefKey] as string[])
-              .concat([value as string])
-          );
-        } else {
-          value = [value as string];
-        }
-        break;
       case 'string':
-        value = value as string;
         break;
       default:
         // should be impossible
@@ -486,18 +619,27 @@ export class Parser {
   }
 
   parse():boolean {
-    this.errorValues = null;
+    // reset errorValues and values
+    this.errorValues = this.normalizationErrors !== null
+      ? { ...this.normalizationErrors }
+      : null;
     this.values = {};
+
+    this.checkOptions();
+
     this.normalizeOptionValues();
     if (this.normalizedValues) {
       this.validateOptionValues();
-      this.handleOptionValues();
+      if (!this.hasErrors()) {
+        this.handleOptionValues();
+      }
     } else {
       this.values = {};
     }
+
     this.freezeValues();
     this.hasNewOptions = false;
-    return ! (this.errorValues && (Object.keys(this.errorValues))?.length > 0);
+    return ! this.hasErrors();
   }
 
   /**
@@ -528,6 +670,8 @@ export class Parser {
         continue;
       }
       for (const optionDef of this.options[optionName]) {
+
+        // test required arguments exist
         if (
           optionDef.required &&
           ( ( ! Object.hasOwn(this.normalizedValues, optionDef.name) ) ||
@@ -565,12 +709,12 @@ export class Parser {
             errorMessage += ` environment variable "${optionDef.env}"`;
           }
           errorMessage += '.';
-          console.log('errorMessage:', errorMessage);
           this.errorValues ||= {};
           this.errorValues[optionDef.name] = errorMessage;
           continue validationSequence;
         }
 
+        // run validators
         if (optionDef.validator) {
           const validators = Array.isArray(optionDef.validator)
             ? optionDef.validator
@@ -578,12 +722,15 @@ export class Parser {
           let lastResult:string|null|Symbol = next;
           for (const validator of validators) {
             lastResult = validator(
-              optionDef.name,
               this.normalizedValues[optionDef.name],
+              optionDef.name,
               this.normalizedValues
             );
             if (lastResult !== next) {
-              this.values[optionDef.name] = lastResult;
+              if (typeof lastResult === 'string') {
+                this.errorValues ||= {};
+                this.errorValues[optionDef.name] = lastResult;
+              }
               break validationSequence;
             }
           }
@@ -596,9 +743,9 @@ export class Parser {
 /**
  * Parse the command line arguments and return the results. Throws if there are
  * any errors at all.
- * @param parserOptions 
- * @param optionsDef 
- * @returns 
+ * @param parserOptions
+ * @param optionsDef
+ * @returns
  */
 export function parse(
   parserOptions:Partial<ParserOptions>,

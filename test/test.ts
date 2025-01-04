@@ -1,7 +1,16 @@
 'use strict';
 
 import TestBattery from 'test-battery';
-import Parser, { argTypeName, ArgTypeName, booleanArg, integerArg, listArg, parse, stringArg } from '../src/parser.js';
+import Parser, {
+  ArgType,
+  booleanArg,
+  integerArg,
+  listArg,
+  next,
+  OptionsDef,
+  parse,
+  stringArg
+} from '../src/parser.js';
 import { describe, it } from 'node:test';
 
 /**
@@ -41,11 +50,141 @@ const optionsDef = [{
 }];
 
 describe('options definition validation', function() {
-  it.todo('rejects arguments with no name');
-  it.todo('rejects invalid argument types');
-  it.todo('rejects required arguments with default values');
-  it.todo('rejects if there are more than one `positional` or `--` arguments');
-  it.todo('rejects defaults of an incorrect type');
+  it('rejects arguments with no name', function(t, done) {
+    let battery = new TestBattery('nameless tests');
+
+    const parser = new Parser({
+      argv: [ '--required', 'ok' ],
+      env: {}
+    }, optionsDef);
+    parser.addOptions({
+      arg: ['--badarg']
+    } as unknown as OptionsDef);
+    const hasError = !parser.parse();
+    battery.test('nameless argument produces error')
+      .value(hasError).is.true;
+
+    battery.done(done);
+  });
+
+  it('rejects invalid argument types', function(t, done) {
+    let battery = new TestBattery('invalid argtype tests');
+
+    const parser = new Parser({
+      argv: [ '--required', 'ok' ],
+      env: {}
+    }, optionsDef);
+    try {
+      parser.addOptions({
+        name: 'badarg',
+        arg: ['--badarg'],
+        type: 'badtype'
+      } as unknown as OptionsDef);
+      const hasError = !parser.parse();
+      battery.test('bad argument type produces error')
+        .value(hasError).is.true;
+    } catch (e) {}
+
+    battery.done(done);
+  });
+
+  it('rejects required arguments with default values', function(t, done) {
+    let battery = new TestBattery('required with default tests');
+
+    const parser = new Parser({
+      argv: [ '--required', 'ok', '--badarg', 'ok ok ok' ],
+      env: {}
+    }, optionsDef);
+    parser.addOptions({
+      name: 'badarg',
+      arg: ['--badarg'],
+      required: true,
+      default: 'not-ok'
+    } as unknown as OptionsDef);
+    const hasError = !parser.parse();
+    battery.test('required argument with default value produces error')
+      .value(hasError).is.true;
+
+    battery.done(done);
+  });
+
+  it(
+    'rejects if there are more than one `positional` or `--` arguments',
+    function(t, done) {
+      let battery = new TestBattery('positional tests');
+
+      let parser = new Parser({
+        argv: [
+          '--required', 'ok', 'myfile.txt', 'yourfile.txt', 'herfile.txt'
+        ],
+        env: {}
+      }, optionsDef);
+      parser.addOptions({
+        name: 'positional1',
+        arg: 'positional'
+      },{
+        name: 'positional2',
+        arg: 'positional'
+      });
+      let hasError = !parser.parse();
+      battery.test('double-positional produces error')
+        .value(hasError).is.true;
+
+      parser = new Parser({
+        argv: [ '--required', 'ok', '--', 'yourfile.txt', 'herfile.txt' ],
+        env: {}
+      }, optionsDef);
+      parser.addOptions({
+        name: 'dd1',
+        arg: '--'
+      },{
+        name: 'dd2',
+        arg: '--'
+      });
+      hasError = !parser.parse();
+      battery.test('double-double-dash produces error')
+        .value(hasError).is.true;
+
+      parser = new Parser({
+        argv: [ '--required', 'ok', '--', 'yourfile.txt', 'herfile.txt' ],
+        env: {}
+      }, optionsDef);
+      parser.addOptions({
+        name: 'positional1',
+        arg: 'positional'
+      },{
+        name: 'dd2',
+        arg: '--'
+      });
+      hasError = !parser.parse();
+      battery.test('positional with double-dash is accepted')
+        .value(hasError).is.false;
+
+      battery.done(done);
+    }
+  );
+
+  it('rejects defaults of an incorrect type', function(t, done) {
+    let battery = new TestBattery('incorrect default type tests');
+
+    const parser = new Parser({
+      argv: [ '--required', 'ok', '--badarg', 'ok ok ok' ],
+      env: {}
+    }, optionsDef);
+    parser.addOptions({
+      name: 'badarg',
+      arg: ['--badarg'],
+      required: true,
+      type: integerArg,
+      default: 'twelve'
+    });
+    const hasError = !parser.parse();
+    battery.test('default of incorrect type produces error')
+      .value(hasError).is.true;
+
+    battery.done(done);
+  });
+
   it.todo('rejects handlers with an incorrect signature');
   it.todo('rejects validators with an incorrect signature');
 });
@@ -59,7 +198,7 @@ describe('argument normalization exception handling', function() {
 describe('command line context', function() {
   it.todo('bare booleans without capturing following argument');
   it.todo('bare arguments must be detected');
-  it.todo('double-dash captures all following arguments');
+  it.todo('double-dash captures all arguments following `--`');
   it.todo('double-dash with post-options captures all arguments as such');
 });
 
@@ -132,7 +271,7 @@ describe('command line forms', function() {
     } catch (e) {
       battery.test('accepts string - long form successful parse').fail;
     }
-    
+
     try {
       values = parse({
         argv: ['-r', 'ok'],
@@ -223,6 +362,32 @@ describe('command line forms', function() {
 
     try {
       values = parse({
+        argv: ['--boolean=naw-yeah', '--required=ok'],
+        truthy: [ 'naw-yeah' ],
+        falsey: [ 'yeah-naw' ],
+        env: {}}, optionsDef);
+      battery.test('accepts boolean - truthy strings')
+        .value(values.boolean)
+        .is.true;
+    } catch (e) {
+      battery.test('accepts boolean - different truthy string').fail;
+    }
+
+    try {
+      values = parse({
+        argv: ['--boolean=yeah-naw', '--required=ok'],
+        truthy: [ 'naw-yeah' ],
+        falsey: [ 'yeah-naw' ],
+        env: {}}, optionsDef);
+      battery.test('accepts boolean - falsey strings')
+        .value(values.boolean)
+        .is.false;
+    } catch (e) {
+      battery.test('accepts boolean - different falsey string').fail;
+    }
+
+    try {
+      values = parse({
         argv: ['-b', '-r', 'ok'],
         env: {}
       }, optionsDef);
@@ -258,7 +423,7 @@ describe('command line forms', function() {
       battery.test(
         'accepts boolean - other words for false successful parse'
       ).fail;
-    }  
+    }
 
     try {
       values = parse({
@@ -340,9 +505,6 @@ describe('command line forms', function() {
       arg: 'positional'
     });
     const hasError = !parser.parse();
-    console.log('hasError:', hasError);
-    console.log('parser.args:', parser.args);
-    console.log('parser.errors:', parser.errors);
     battery.test('positional type has no errors')
       .value(hasError).is.false;
     battery.endIfErrors();
@@ -361,15 +523,285 @@ describe('command line forms', function() {
 });
 
 describe('argument handlers', function() {
-  it.todo('handlers that return same type');
-  it.todo('handlers that return different type');
-  it.todo('handlers that defer to next handler');
+
+  it('handlers that return same type', function(t, done) {
+    let battery = new TestBattery('handler tests');
+    let values;
+    try {
+      values = parse({
+        argv: ['--string=pineapple' ],
+        env: {},
+      }, [{
+        name: 'string',
+        arg: [ '--string' ],
+        env: 'STRING',
+        handler: (value: ArgType|undefined) => {
+          if (value !== undefined) {
+            switch(value as string) {
+            case 'pineapple':
+              return {value: 'anana', next: false};
+            default:
+              return {value, next: false};
+            }
+          } else {
+            return next;
+          }
+        },
+        type: stringArg,
+      }]);
+      battery.test('handler can change value')
+        .value(values.string)
+        .value('anana')
+        .is.strictlyEqual;
+    } catch (e) {
+      battery.test('accepts string - handler operated successfully').fail;
+    }
+
+    battery.done(done);
+  });
+
+  it('handlers that return different type', function(t, done) {
+    let battery = new TestBattery('handler tests');
+    let values;
+    try {
+      values = parse({
+        argv: ['--string=pineapple' ],
+        env: {},
+      }, [{
+        name: 'string',
+        arg: [ '--string' ],
+        env: 'STRING',
+        handler: (value: ArgType|undefined) => {
+          if (value !== undefined) {
+            switch(value as string) {
+            case 'pineapple':
+              return {value: 12, next: false};
+            default:
+              return {value: 0, next: false};
+            }
+          } else {
+            return next;
+          }
+        },
+        type: stringArg,
+      }]);
+      battery.test('handler can change value and type')
+        .value(values.string)
+        .value(12)
+        .is.strictlyEqual;
+    } catch (e) {
+      battery.test('accepts string - convert to integer - handler operated ' +
+        'successfully').fail;
+    }
+
+    battery.done(done);
+  });
+
+  it('handlers that defer to next handler', function(t, done) {
+    let battery = new TestBattery('handler tests');
+    let values;
+    try {
+      values = parse({
+        argv: ['--string=pineapple' ],
+        env: {},
+      }, [{
+        name: 'string',
+        arg: [ '--string' ],
+        env: 'STRING',
+        handler: [(value: ArgType|undefined) => {
+          if (value !== undefined) {
+            switch(value) {
+            case 'pineapple':
+              return {value: 'anana', next: true};
+            default:
+              return {value: 0, next: false};
+            }
+          } else {
+            return next;
+          }
+        }, (value: ArgType|undefined) => {
+          if (value !== undefined) {
+            switch(value) {
+              case 'anana':
+                return {value: '鳳梨', next: false};
+              default:
+                return {value: 0, next: false};
+              }
+            } else {
+              return next;
+            }
+          }],
+        type: stringArg,
+      }]);
+      battery.test('handler can defer to next handler')
+        .value(values.string)
+        .value('鳳梨')
+        .is.strictlyEqual;
+    } catch (e) {
+      battery.test('accepts string - convert to integer - handler operated ' +
+        'successfully').fail;
+    }
+
+    battery.done(done);
+  });
 });
 
-describe.todo('argument validation', () => {
-  it.todo('validation');
-  it.todo('validation with handler');
-  it.todo('validation of positional arguments');
+describe('argument validation', () => {
+
+  it('validation', function(t, done) {
+    let battery = new TestBattery('handler tests');
+    let values;
+    try {
+      values = parse({
+        argv: ['--string=pineapple' ],
+        env: {},
+      }, [{
+        name: 'string',
+        arg: [ '--string' ],
+        env: 'STRING',
+        validator(value) {
+          const result = ['anana', 'pineapple', '鳳梨'].includes(value as string)
+            ? null
+            : 'string is not a pineapple';
+          return result;
+        }
+      }]);
+    } catch (e) {
+      battery.test('accepts string - accepts pineapple 1').fail;
+    }
+
+    try {
+      values = parse({
+        argv: ['--string=coconut' ],
+        env: {},
+      }, [{
+        name: 'string',
+        arg: [ '--string' ],
+        env: 'STRING',
+        validator(value) {
+          return ['anana', 'pineapple', '鳳梨'].includes(value as string)
+            ? null
+            : 'string is not a pineapple';
+        }
+      }]);
+      battery.test('accepts string - rejects pineapple').fail;
+    } catch (e) {
+    }
+
+    battery.done(done);
+  });
+
+  it('validation with handler', function(t, done) {
+    let battery = new TestBattery('handler tests');
+    let values;
+    try {
+      values = parse({
+        argv: ['--string=pineapple' ],
+        env: {},
+      }, [{
+        name: 'string',
+        arg: [ '--string' ],
+        env: 'STRING',
+        handler: (value: ArgType|undefined) => {
+          if (value !== undefined) {
+            switch(value as string) {
+            case 'pineapple':
+              return {value: 'anana', next: false};
+            default:
+              return {value, next: false};
+            }
+          } else {
+            return next;
+          }
+        },
+        validator(value) {
+          return ['anana', 'pineapple', '鳳梨'].includes(value as string)
+            ? null
+            : 'string is not a pineapple';
+        }
+      }]);
+      battery.test('accepts string and handles it')
+        .value(values.string)
+        .value('anana')
+        .is.strictlyEqual;
+    } catch (e) {
+      battery.test('accepts string - accepts pineapple 2').fail;
+    }
+
+    try {
+      values = parse({
+        argv: ['--string=coconut' ],
+        env: {},
+      }, [{
+        name: 'string',
+        arg: [ '--string' ],
+        env: 'STRING',
+        handler: (value: ArgType|undefined) => {
+          if (value !== undefined) {
+            switch(value) {
+            case 'pineapple':
+              return {value: 'anana', next: false};
+            default:
+              return {value, next: false};
+            }
+          } else {
+            return next;
+          }
+        },
+        validator(value) {
+          return ['anana', 'pineapple', '鳳梨'].includes(value as string)
+            ? null
+            : 'string is not a pineapple';
+        }
+      }]);
+      battery.test('accepts string - rejects pineapple').fail;
+    } catch (e) {
+    }
+
+    battery.done(done);
+  });
+
+  it('validation of positional arguments', function(t, done) {
+    let battery = new TestBattery('positional tests');
+
+    try {
+      const parser = new Parser({
+        argv: [ 'anana', 'pamplemousse', 'pomme', '-l=boeuf', '-l=poulet' ],
+        env: {},
+      });
+      parser.addOptions([{
+        name: 'positional',
+        arg: 'positional',
+        validator(value) {
+          return ['anana', 'pineapple', '鳳梨'].includes((value as string[])[0])
+            ? null
+            : 'positional is not a pineapple';
+        }
+      }, {
+        name: 'list',
+        arg: [ '--list', '-l' ],
+        type: listArg
+      }]);
+      const parseOk = parser.parse();
+      if (parseOk) {
+
+        battery.test('accepts positional is array')
+          .value(parser.args.positional)
+          .is.array;
+        battery.test('accepts positional - first positional is pineapple')
+          .value((parser.args.positional as string[])[0])
+          .value('anana')
+          .is.strictlyEqual;
+
+      } else {
+        battery.test('accepts positional - accepts pineapple').fail;
+      }
+    } catch (e) {
+      battery.test('accepts positional - without exception').fail;
+    }
+
+    battery.done(done);
+  });
 });
 
 describe.todo('global variables', function() {
