@@ -25,7 +25,7 @@ const optionsDef = [{
   default: 10
 }, {
   name: 'string',
-  arg: [ '--string' ],
+  arg: [ '--string', '-s' ],
   env: 'STRING',
   type: stringArg,
 }, {
@@ -200,8 +200,6 @@ describe('argument normalization exception handling', function() {
       }, optionsDef);
       battery.test('accepts unparseable integer').fail;
 
-      console.log('values:', values)
-
     } catch (e) {
     }
 
@@ -240,10 +238,67 @@ describe('argument normalization exception handling', function() {
 });
 
 describe('command line context', function() {
-  it.todo('bare booleans without capturing following argument');
-  it.todo('bare arguments must be detected');
-  it.todo('double-dash captures all arguments following `--`');
-  it.todo('double-dash with post-options captures all arguments as such');
+  it('bare booleans without capturing following argument', function(t, done) {
+    let battery = new TestBattery('unparseable integer tests');
+
+    try {
+      const values = parse({
+        argv: ['--boolean', '--string=guava', '--required=ok'],
+        env: {}
+      }, optionsDef);
+      battery.test('accepts bare boolean')
+        .value(values.boolean)
+        .is.true;
+      battery.test('accepts following argument')
+        .value(values.string)
+        .value('guava')
+        .is.strictlyEqual;
+    } catch (e) {
+      battery.test('accepts bare boolean successful parse').fail;
+    }
+
+    battery.done(done);
+  });
+
+  it('double-dash captures all arguments following `--`', function(t, done) {
+    let battery = new TestBattery('positional tests');
+
+    try {
+      const parser = new Parser({
+        argv: [ '-s=pineapple', '-r=ok', '--', '--string=afterdd', 'curl' ],
+        env: {},
+      }, optionsDef);
+      parser.addOptions([{
+        name: 'doubledash',
+        arg: '--'}]);
+      const parseOk = parser.parse();
+      if (parseOk) {
+
+        battery.test('string is pineapple')
+          .value(parser.args.string)
+          .value('pineapple')
+          .is.strictlyEqual;
+        battery.test('doubledash is array')
+          .value(parser.args.doubledash)
+          .is.array;
+        battery.test('doubledash value 0')
+          .value((parser.args.doubledash as string[])[0])
+          .value('--string=afterdd')
+          .is.strictlyEqual;
+        battery.test('doubledash value 1')
+          .value((parser.args.doubledash as string[])[1])
+          .value('curl')
+          .is.strictlyEqual;
+
+      } else {
+        battery.test('double-dash handled').fail;
+      }
+    } catch (e) {
+      battery.test('accepts positional - without exception').fail;
+    }
+
+    battery.done(done);
+  });
 });
 
 describe('command line forms', function() {

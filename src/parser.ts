@@ -455,11 +455,16 @@ export class Parser {
    */
   private normalizeOptionValues():void {
     this.normalizedValues = {};
+    let argIdx = 0;
 
     // first scan the command line arguments
     if (this.parserOptions.argv?.length) {
-      for (let argIdx = 0; argIdx < this.parserOptions.argv?.length; argIdx++) {
+      for (; argIdx < this.parserOptions.argv?.length; argIdx++) {
         const arg = this.parserOptions.argv[argIdx];
+        if (arg === '--') {
+          argIdx++;
+          break;
+        }
         let argSwitch = arg.replace(/=.*/, '');
         let foundOption = false;
         for (const optionName of Object.keys(this.options)) {
@@ -505,6 +510,23 @@ export class Parser {
           }
         }
       }
+
+      // now check for missing positional arguments
+      const option = Object.keys(this.options).find(k => {
+        const o = this.options[k][0];
+        return (o.arg === '--');
+      }) || Object.keys(this.options).find(k => {
+        const o = this.options[k][0];
+        return (o.arg === 'positional');
+      })
+      if (option) {
+        for (; argIdx < this.parserOptions.argv?.length; argIdx++) {
+          const arg = this.parserOptions.argv[argIdx];
+          this.normalizedValues[option] ||= ([] as string[]);
+          (this.normalizedValues[option] as string[]).push(arg);
+        }
+      }
+
     }
 
     // then scan the environment variables
