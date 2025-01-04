@@ -102,7 +102,6 @@ export interface ParserOptions {
   argv:string[],
   env:Record<string, string>,
   falsey:string[],
-  global: string|null,
   truthy:string[]
 }
 
@@ -163,7 +162,6 @@ export class Parser {
   private parserOptions:ParserOptions = {
     argv: process.argv.slice(2),
     env: process.env as Record<string, string>,
-    global: 'argv',
     falsey: FALSEY_STRINGS,
     truthy: TRUTHY_STRINGS
   };
@@ -590,6 +588,9 @@ export class Parser {
       case 'integer':
         try {
           value = Number.parseInt(value as string);
+          if (Number.isNaN(value)) {
+            throw new Error('NaN');
+          }
         } catch(e) {
           this.errorValues ||= {};
           this.errorValues[optionDefKey] =
@@ -639,6 +640,7 @@ export class Parser {
 
     this.freezeValues();
     this.hasNewOptions = false;
+
     return ! this.hasErrors();
   }
 

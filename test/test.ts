@@ -190,9 +190,53 @@ describe('options definition validation', function() {
 });
 
 describe('argument normalization exception handling', function() {
-  it.todo('unparseable integer');
-  it.todo('unparseable boolean');
-  it.todo('unknown parameter');
+  it('unparseable integer', function(t, done) {
+    let battery = new TestBattery('unparseable integer tests');
+
+    try {
+      const values = parse({
+        argv: ['--integer=twelve', '--required=ok'],
+        env: {}
+      }, optionsDef);
+      battery.test('accepts unparseable integer').fail;
+
+      console.log('values:', values)
+
+    } catch (e) {
+    }
+
+    battery.done(done);
+  });
+
+  it('unparseable boolean', function(t, done) {
+    let battery = new TestBattery('unparseable integer tests');
+
+    try {
+      parse({
+        argv: ['--boolean=noway', '--required=ok'],
+        env: {}
+      }, optionsDef);
+      battery.test('accepts unparseable boolean').fail;
+    } catch (e) {
+    }
+
+    battery.done(done);
+  });
+
+  it('unknown parameter', function(t, done) {
+    let battery = new TestBattery('unparseable integer tests');
+
+    try {
+      parse({
+        argv: ['--unknown=twelve', '--required=ok'],
+        env: {}
+      }, optionsDef);
+      battery.test('accepts unknown parameter').fail;
+    } catch (e) {
+    }
+
+    battery.done(done);
+  });
 });
 
 describe('command line context', function() {
@@ -802,8 +846,4 @@ describe('argument validation', () => {
 
     battery.done(done);
   });
-});
-
-describe.todo('global variables', function() {
-  it.todo('global variable set');
 });

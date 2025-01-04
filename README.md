@@ -54,7 +54,6 @@ Note that, because this module is a work in progess, the stati are marked as fol
 🟢 | `argv?: string[]` | `process.argv.slice(2)` | The arguments to parse as the command line. Should not include the name of the app itself.
 🟢 | `env?: Record<string, string>` | `process.env` | The environment variable set to pass into the parser.
 🟢 | `falsey?: string[]` | `['false', 'no', ...]` | A set of values to accept as meaning `false` for `boolean` arguments. Case insensitive.
-🔴 | `global?: string\|null` | `argv` | A global variable to set the parsed command line object to. For example, if the value is `argv`, the global variables can be accessed anywhere in the app as `global.argv`.
 🟢 | `truthy?: string[]` |  `['true', 'yes', ...]` | A set of values to accept as meaning `true` for `boolean` arguments. Case insensitive.
 
 ### OptionsDef
